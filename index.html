@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>PDA Scanner Filter - Auto & Voice</title>
+  <title>Scanner Filter V2 - Auto & Voice</title>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
@@ -36,7 +36,7 @@
 <body>
 
   <div class="box">
-    <h4>SCAN BARCODE RESI (AUTO-ENTER)</h4>
+    <h4>SCAN BARCODE RESI (VERSI 2 - AUTO)</h4>
 
     <div class="test-bar">
       <button type="button" class="btn-green" onclick="tesSuara('ok')">🔊 Tes Valid</button>
@@ -44,8 +44,8 @@
       <button type="button" class="btn-yellow" onclick="tesSuara('double')">🗣️ Tes "Paket Double"</button>
     </div>
 
-    <input type="text" id="scanInput" placeholder="Arahkan laser scan ke barcode..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">SIAP SCAN PAKET (Klik tombol Tes Suara sekali sebelum mulai)</div>
+    <input type="text" id="scanInput" placeholder="Scan resi di sini (otomatis terproses)..." autofocus autocomplete="off">
+    <div id="statusBox" class="status ok">SISTEM V2 AKTIF - SIAP SCAN PAKET</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -60,7 +60,7 @@
   </div>
 
   <div class="box" id="cancelPanel" style="display:none;">
-    <h4>Tambah / Update Resi Cancel (Jam 10 / 12 / dst)</h4>
+    <h4>Tambah / Update Resi Cancel</h4>
     <textarea id="cancelInput" rows="4" placeholder="Paste daftar resi cancel di sini (1 resi per baris)..."></textarea>
     <div class="btn-group">
       <button type="button" class="btn-blue" onclick="tambahCancel()">Simpan & Cek Ulang</button>
@@ -86,30 +86,23 @@
     var logs = JSON.parse(localStorage.getItem('pda_logs') || '[]');
     var scanInput = document.getElementById('scanInput');
     var cancelInput = document.getElementById('cancelInput');
-    var teksSebelumnya = "";
-    var hitungStabil = 0;
     var ctxAudio = null;
+    var jedaKetik = null;
 
     function bunyiBeep(freq, durasi, tipe) {
       try {
         var AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!ctxAudio) {
-          ctxAudio = new AudioCtx();
-        }
-        if (ctxAudio.state === 'suspended') {
-          ctxAudio.resume();
-        }
+        if (!ctxAudio) ctxAudio = new AudioCtx();
+        if (ctxAudio.state === 'suspended') ctxAudio.resume();
         var osc = ctxAudio.createOscillator();
         var gain = ctxAudio.createGain();
-        osc.type = tipe;
+        osc.type = tipe || 'sine';
         osc.frequency.value = freq;
         gain.gain.value = 1.0;
         osc.connect(gain);
         gain.connect(ctxAudio.destination);
         osc.start();
-        setTimeout(function() {
-          osc.stop();
-        }, durasi);
+        setTimeout(function() { try { osc.stop(); } catch(e){} }, durasi);
       } catch (err) {}
     }
 
@@ -120,7 +113,6 @@
           var msg = new SpeechSynthesisUtterance(kalimat);
           msg.lang = 'id-ID';
           msg.rate = 1.0;
-          msg.pitch = 1.0;
           msg.volume = 1.0;
           window.speechSynthesis.speak(msg);
         }
@@ -129,19 +121,17 @@
 
     function tesSuara(jenis) {
       if (jenis === 'ok') {
-        bunyiBeep(1000, 120, 'sine');
+        bunyiBeep(1050, 120, 'sine');
         if (navigator.vibrate) navigator.vibrate(70);
       } else if (jenis === 'cancel') {
-        bunyiBeep(220, 450, 'sawtooth');
+        bunyiBeep(220, 400, 'sawtooth');
         bicaraManusia("Paket cancel!");
         if (navigator.vibrate) navigator.vibrate(700);
       } else if (jenis === 'double') {
-        bunyiBeep(650, 150, 'square');
-        setTimeout(function() {
-          bunyiBeep(650, 150, 'square');
-        }, 220);
+        bunyiBeep(650, 140, 'square');
+        setTimeout(function() { bunyiBeep(650, 140, 'square'); }, 200);
         bicaraManusia("Paket double!");
-        if (navigator.vibrate) navigator.vibrate(300);
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       }
     }
 
@@ -151,10 +141,9 @@
     }
 
     function prosesResi(nilaiMentah) {
+      clearTimeout(jedaKetik);
       var resi = nilaiMentah.replace(/[\r\n\t]+/g, '').trim().toUpperCase();
       scanInput.value = '';
-      teksSebelumnya = '';
-      hitungStabil = 0;
       if (!resi) return;
 
       var statusBox = document.getElementById('statusBox');
@@ -191,6 +180,7 @@
       scanInput.focus();
     }
 
+    // 1. Tangkap tombol Enter / Tab
     scanInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' || e.keyCode === 13 || e.key === 'Tab') {
         e.preventDefault();
@@ -198,23 +188,16 @@
       }
     });
 
-    setInterval(function() {
-      var nilaiSekarang = scanInput.value;
-      if (nilaiSekarang.trim().length >= 5) {
-        if (nilaiSekarang === teksSebelumnya) {
-          hitungStabil++;
-          if (hitungStabil >= 1) {
-            prosesResi(nilaiSekarang);
-          }
-        } else {
-          teksSebelumnya = nilaiSekarang;
-          hitungStabil = 0;
-        }
-      } else {
-        teksSebelumnya = nilaiSekarang;
-        hitungStabil = 0;
+    // 2. Auto-proses 200ms setelah scanner selesai memasukkan karakter (tanpa Enter)
+    scanInput.addEventListener('input', function() {
+      clearTimeout(jedaKetik);
+      var isi = this.value;
+      if (isi.trim().length >= 5) {
+        jedaKetik = setTimeout(function() {
+          prosesResi(scanInput.value);
+        }, 200);
       }
-    }, 100);
+    });
 
     document.addEventListener('click', function(e) {
       if (e.target !== cancelInput && e.target.tagName !== 'BUTTON') {
@@ -227,9 +210,7 @@
       var baris = teks.split(/\r?\n/).map(function(s) {
         return s.trim().toUpperCase();
       }).filter(Boolean);
-      baris.forEach(function(r) {
-        cancelSet.add(r);
-      });
+      baris.forEach(function(r) { cancelSet.add(r); });
       cancelInput.value = '';
 
       var ditarik = 0;
@@ -244,7 +225,7 @@
       simpanData();
       renderUI();
       if (ditarik > 0) tesSuara('cancel');
-      alert('Berhasil menambah ' + baris.length + ' resi cancel.\nPaket terlanjur scan yang wajib ditarik: ' + ditarik + ' paket.');
+      alert('Berhasil menambah ' + baris.length + ' resi cancel.\nPaket terlanjur scan wajib ditarik: ' + ditarik + ' paket.');
       scanInput.focus();
     }
 
@@ -258,3 +239,10 @@
     }
 
     function resetSemua() {
+      if (confirm('Hapus semua riwayat scan untuk mulai shift baru?')) {
+        logs = [];
+        simpanData();
+        renderUI();
+        document.getElementById('statusBox').className = 'status ok';
+        document.getElementById('statusBox').innerText = 'SISTEM V2 AKTIF - SIAP SCAN PAKET';
+        scanInput.focus();
