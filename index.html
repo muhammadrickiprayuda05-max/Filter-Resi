@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V6 - Excel & CSV</title>
-  <!-- Server CDN Cloudflare yang lebih cepat dan stabil -->
+  <title>Scanner Filter V7 - Live Sync Multi-PDA</title>
   <script src="https://cloudflare.com"></script>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
     .box { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    h4 { margin: 0 0 8px 0; color: #333; }
+    .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    h4 { margin: 0; color: #333; }
+    .sync-badge { font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 12px; background: #d4edda; color: #155724; }
+    .sync-offline { background: #f8d7da; color: #721c24; }
     input[type="text"] { width: 100%; padding: 12px; font-size: 18px; font-weight: bold; border: 2px solid #0066cc; border-radius: 6px; outline: none; }
     input[type="text"]:focus { border-color: #28a745; background: #f9fffb; }
     textarea { width: 100%; padding: 8px; font-size: 13px; border: 1px solid #ccc; border-radius: 6px; }
@@ -39,7 +41,10 @@
 <body>
 
   <div class="box">
-    <h4>SCAN BARCODE RESI (VERSI 6 - READY)</h4>
+    <div class="header-bar">
+      <h4>SCAN RESI (V7 - LIVE SYNC)</h4>
+      <span id="syncStatus" class="sync-badge">🟡 MENGHUBUNGKAN...</span>
+    </div>
 
     <div class="test-bar">
       <button type="button" class="btn-green" id="btnTesOk">🔊 Tes Valid</button>
@@ -48,7 +53,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">STATUS: VERSI 6 AKTIF - SIAP SCAN</div>
+    <div id="statusBox" class="status ok">LIVE SYNC AKTIF - SIAP SCAN PAKET</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -63,7 +68,7 @@
   </div>
 
   <div class="box" id="cancelPanel" style="display:none;">
-    <h4>Import File Excel / CSV / Paste Resi Cancel</h4>
+    <h4>Import File Excel / CSV / Paste Resi Cancel (Otomatis ke Semua PDA)</h4>
 
     <div class="btn-group" style="margin-bottom: 8px;">
       <label for="excelFileInput" class="file-label btn-purple">📂 Pilih File Excel (.xlsx) / CSV</label>
@@ -72,14 +77,14 @@
 
     <textarea id="cancelInput" rows="3" placeholder="Atau paste daftar resi cancel manual di sini..."></textarea>
     <div class="btn-group">
-      <button type="button" class="btn-blue" id="btnSimpanCancel">Simpan & Cek Ulang</button>
+      <button type="button" class="btn-blue" id="btnSimpanCancel">Simpan & Kirim ke Semua PDA</button>
       <button type="button" class="btn-red" id="btnHapusCancel">Kosongkan Cancel</button>
     </div>
   </div>
 
   <div class="box">
     <div style="display:flex; justify-content:space-between; align-items:center;">
-      <h4>Riwayat Scan (20 Terakhir)</h4>
+      <h4>Riwayat Scan Semua Perangkat (25 Terakhir)</h4>
       <button type="button" class="btn-red" style="flex:none; padding:5px 10px;" id="btnReset">Reset Shift</button>
     </div>
     <table>
@@ -92,11 +97,15 @@
 
   <script>
     (function() {
-      var cancelSet = new Set(JSON.parse(localStorage.getItem('pda_cancel') || '[]'));
-      var logs = JSON.parse(localStorage.getItem('pda_logs') || '[]');
+      // URL Firebase Realtime Database Anda
+      var DB_URL = "https://firebasedatabase.app";
+
+      var cancelSet = new Set();
+      var logs = [];
       var scanInput = document.getElementById('scanInput');
       var cancelInput = document.getElementById('cancelInput');
       var statusBox = document.getElementById('statusBox');
+      var syncBadge = document.getElementById('syncStatus');
       var ctxAudio = null;
       var lastVal = "";
       var idleCount = 0;
@@ -143,14 +152,51 @@
           playTone(650, 140, 'square');
           setTimeout(function() { playTone(650, 140, 'square'); }, 200);
           speakText("Paket double!");
-          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+          if (navigator.vibrate) navigator.vibrate();
         }
       }
 
-      function saveAll() {
-        localStorage.setItem('pda_cancel', JSON.stringify(Array.from(cancelSet)));
-        localStorage.setItem('pda_logs', JSON.stringify(logs));
+      // Sinkronisasi ke Cloud Firebase (Dibaca semua PDA secara real-time)
+      function pushToCloud() {
+        fetch(DB_URL + "/gudang_data.json", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cancelList: Array.from(cancelSet),
+            scanLogs: logs.slice(0, 500)
+          })
+        }).then(function() {
+          syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
+          syncBadge.className = "sync-badge";
+        }).catch(function() {
+          syncBadge.textContent = "🔴 OFFLINE";
+          syncBadge.className = "sync-badge sync-offline";
+        });
       }
+
+      function pullFromCloud() {
+        fetch(DB_URL + "/gudang_data.json")
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
+            syncBadge.className = "sync-badge";
+            if (data) {
+              cancelSet = new Set(data.cancelList || []);
+              logs = data.scanLogs || [];
+            } else {
+              cancelSet = new Set();
+              logs = [];
+            }
+            renderAll();
+          })
+          .catch(function() {
+            syncBadge.textContent = "🔴 OFFLINE";
+            syncBadge.className = "sync-badge sync-offline";
+          });
+      }
+
+      // Tarik pembaruan dari server setiap 1.5 detik agar semua PDA selalu sinkron
+      setInterval(pullFromCloud, 1500);
 
       function renderAll() {
         document.getElementById('cListCount').textContent = cancelSet.size;
@@ -159,7 +205,7 @@
         document.getElementById('cDouble').textContent = logs.filter(function(x) { return x.kode === 'DOUBLE'; }).length;
 
         var html = '';
-        var sliceLogs = logs.slice(0, 20);
+        var sliceLogs = logs.slice(0, 25);
         for (var i = 0; i < sliceLogs.length; i++) {
           var x = sliceLogs[i];
           var bg = x.kode === 'CANCEL' ? '#f8d7da' : (x.kode === 'DOUBLE' ? '#fff3cd' : '#ffffff');
@@ -170,64 +216,56 @@
 
       function cekUlangScanSebelumnya() {
         var pulled = 0;
-        for (var j = 0; j < logs.length; j++) {
-          if (logs[j].kode === 'VALID' && cancelSet.has(logs[j].resi)) {
-            logs[j].kode = 'CANCEL';
-            logs[j].label = 'CANCEL (SUSULAN - TARIK!)';
-            pulled++;
-          }
-        }
-        return pulled;
-      }
-
-      function processScan(raw) {
-        var resi = raw.replace(/[\r\n\t]+/g, '').trim().toUpperCase();
-        scanInput.value = '';
-        lastVal = '';
-        idleCount = 0;
-        if (!resi) return;
-
-        var isDouble = logs.some(function(item) {
-          return item.resi === resi && item.kode === 'VALID';
-        });
-
-        var kode = '';
-        var label = '';
-
-        if (cancelSet.has(resi)) {
-          kode = 'CANCEL';
-          label = 'CANCEL - TARIK PAKET!';
-          statusBox.className = 'status cancel';
-          statusBox.textContent = '❌ ' + resi + '\nPAKET CANCEL!';
-          triggerAlert('cancel');
-        } else if (isDouble) {
-          kode = 'DOUBLE';
-          label = 'DOUBLE SCAN!';
-          statusBox.className = 'status double';
-          statusBox.textContent = '⚠️ ' + resi + '\nPAKET DOUBLE!';
-          triggerAlert('double');
-        } else {
-          kode = 'VALID';
-          label = 'VALID (OK)';
-          statusBox.className = 'status ok';
-          statusBox.textContent = '✅ ' + resi + ' - VALID';
-          triggerAlert('ok');
-        }
-
-        var nowStr = new Date().toLocaleTimeString('id-ID', { hour12: false });
-        logs.unshift({ waktu: nowStr, resi: resi, kode: kode, label: label });
-        saveAll();
-        renderAll();
-        scanInput.focus();
-      }
-
-      document.getElementById('excelFileInput').addEventListener('change', function(e) {
-        var file = e.target.files[0];
-        if (!file) return;
-
+for (var j = 0; j < logs.length; j++) {
+if (logs[j].kode === 'VALID' && cancelSet.has(logs[j].resi)) {
+logs[j].kode = 'CANCEL';
+logs[j].label = 'CANCEL (SUSULAN - TARIK!)';
+pulled++;
+}
+}
+return pulled;
+}
+function processScan(raw) {
+var resi = raw.replace(/[\r\n\t]+/g, '').trim().toUpperCase();
+scanInput.value = '';
+lastVal = '';
+idleCount = 0;
+if (!resi) return;
+var isDouble = logs.some(function(item) {
+return item.resi === resi && item.kode === 'VALID';
+});
+var kode = '';
+var label = '';
+if (cancelSet.has(resi)) {
+kode = 'CANCEL';
+label = 'CANCEL - TARIK PAKET!';
+statusBox.className = 'status cancel';
+statusBox.textContent = '❌ ' + resi + '\nPAKET CANCEL!';
+triggerAlert('cancel');
+} else if (isDouble) {
+kode = 'DOUBLE';
+label = 'DOUBLE SCAN!';
+statusBox.className = 'status double';
+statusBox.textContent = '⚠️ ' + resi + '\nPAKET DOUBLE!';
+triggerAlert('double');
+} else {
+kode = 'VALID';
+label = 'VALID (OK)';
+statusBox.className = 'status ok';
+statusBox.textContent = '✅ ' + resi + ' - VALID';
+triggerAlert('ok');
+}
+var nowStr = new Date().toLocaleTimeString('id-ID', { hour12: false });
+logs.unshift({ waktu: nowStr, resi: resi, kode: kode, label: label });
+renderAll();
+pushToCloud();
+scanInput.focus();
+}
+document.getElementById('excelFileInput').addEventListener('change', function(e) {
+var file = e.target.files;
+if (!file) return;
 var fileName = file.name.toLowerCase();
 var headerWords = ['NO_RESI', 'NOMOR_RESI', 'NOMOR RESI', 'RESI', 'AWB', 'NO_AWB', 'TRACKING NUMBER', 'TRACKING_NUMBER', 'WAYBILL', 'WAYBILL NO'];
-// Jalur 1: Jika file CSV atau TXT, langsung baca secara offline 100% tanpa internet
 if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
 var textReader = new FileReader();
 textReader.onload = function(evt) {
@@ -242,19 +280,18 @@ added++;
 }
 }
 var pulled = cekUlangScanSebelumnya();
-saveAll();
 renderAll();
+pushToCloud();
 if (pulled > 0) triggerAlert('cancel');
-alert('Berhasil mengimpor ' + added + ' resi dari CSV "' + file.name + '".\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
+alert('Berhasil mengirim ' + added + ' resi cancel ke semua PDA!\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
 e.target.value = '';
 scanInput.focus();
 };
 textReader.readAsText(file);
 return;
 }
-// Jalur 2: Jika file Excel (.xlsx / .xls), baca dengan SheetJS
 if (typeof XLSX === 'undefined') {
-alert('Modul Excel belum termuat. Pastikan internet aktif lalu refresh halaman, atau simpan file Excel Anda sebagai format .CSV agar bisa dibaca offline.');
+alert('Modul Excel belum termuat. Pastikan internet aktif lalu refresh halaman, atau gunakan format .CSV.');
 e.target.value = '';
 return;
 }
@@ -263,7 +300,7 @@ reader.onload = function(evt) {
 try {
 var data = new Uint8Array(evt.target.result);
 var workbook = XLSX.read(data, { type: 'array' });
-var firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+var firstSheet = workbook.Sheets[workbook.SheetNames];
 var rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
 var added = 0;
 for (var r = 0; r < rows.length; r++) {
@@ -278,10 +315,10 @@ added++;
 }
 }
 var pulled = cekUlangScanSebelumnya();
-saveAll();
 renderAll();
+pushToCloud();
 if (pulled > 0) triggerAlert('cancel');
-alert('Berhasil mengimpor ' + added + ' resi dari Excel "' + file.name + '".\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
+alert('Berhasil mengirim ' + added + ' resi cancel dari Excel ke semua PDA!\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
 } catch (err) {
 alert('Gagal membaca file Excel: ' + err.message);
 }
@@ -323,27 +360,27 @@ added++;
 }
 cancelInput.value = '';
 var pulled = cekUlangScanSebelumnya();
-saveAll();
 renderAll();
+pushToCloud();
 if (pulled > 0) triggerAlert('cancel');
-alert('Berhasil menambah ' + added + ' resi cancel.\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
+alert('Berhasil mengirim ' + added + ' resi cancel ke semua PDA!\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
 scanInput.focus();
 };
 document.getElementById('btnHapusCancel').onclick = function() {
-if (confirm('Kosongkan semua daftar resi cancel?')) {
+if (confirm('Kosongkan semua daftar resi cancel di semua PDA?')) {
 cancelSet.clear();
-saveAll();
 renderAll();
+pushToCloud();
 scanInput.focus();
 }
 };
 document.getElementById('btnReset').onclick = function() {
-if (confirm('Hapus semua riwayat scan untuk mulai shift baru?')) {
+if (confirm('Hapus semua riwayat scan di semua PDA untuk mulai shift baru?')) {
 logs = [];
-saveAll();
 renderAll();
+pushToCloud();
 statusBox.className = 'status ok';
-statusBox.textContent = 'STATUS: VERSI 6 AKTIF - SIAP SCAN';
+statusBox.textContent = 'LIVE SYNC AKTIF - SIAP SCAN PAKET';
 scanInput.focus();
 }
 };
@@ -356,7 +393,7 @@ csv += (i + 1) + "," + rev[i].waktu + "," + rev[i].resi + ',"' + rev[i].label + 
 var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
 var a = document.createElement('a');
 a.href = URL.createObjectURL(blob);
-a.download = 'Scan_Resi_' + new Date().toISOString().slice(0, 10) + '.csv';
+a.download = 'Scan_Resi_Sync_' + new Date().toISOString().slice(0, 10) + '.csv';
 a.click();
 scanInput.focus();
 };
@@ -388,7 +425,7 @@ if (e.target !== cancelInput && e.target.tagName !== 'BUTTON' && e.target.tagNam
 scanInput.focus();
 }
 });
-renderAll();
+pullFromCloud();
 scanInput.focus();
 })();
       </script>
