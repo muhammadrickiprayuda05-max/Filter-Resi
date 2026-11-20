@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V5 - Excel Import</title>
-  <!-- Pustaka pembaca file Excel (.xlsx / .xls / .csv) -->
-  <script src="https://jsdelivr.net"></script>
+  <title>Scanner Filter V6 - Excel & CSV</title>
+  <!-- Server CDN Cloudflare yang lebih cepat dan stabil -->
+  <script src="https://cloudflare.com"></script>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
@@ -39,7 +39,7 @@
 <body>
 
   <div class="box">
-    <h4>SCAN BARCODE RESI (VERSI 5 - EXCEL)</h4>
+    <h4>SCAN BARCODE RESI (VERSI 6 - READY)</h4>
 
     <div class="test-bar">
       <button type="button" class="btn-green" id="btnTesOk">🔊 Tes Valid</button>
@@ -48,7 +48,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">STATUS: VERSI 5 AKTIF - SIAP SCAN</div>
+    <div id="statusBox" class="status ok">STATUS: VERSI 6 AKTIF - SIAP SCAN</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -63,12 +63,11 @@
   </div>
 
   <div class="box" id="cancelPanel" style="display:none;">
-    <h4>Import File Excel / Paste Resi Cancel</h4>
+    <h4>Import File Excel / CSV / Paste Resi Cancel</h4>
 
-    <!-- TOMBOL PILIH FILE EXCEL / CSV -->
     <div class="btn-group" style="margin-bottom: 8px;">
-      <label for="excelFileInput" class="file-label btn-purple">📂 Pilih File Excel / CSV Cancel</label>
-      <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv" style="display:none;">
+      <label for="excelFileInput" class="file-label btn-purple">📂 Pilih File Excel (.xlsx) / CSV</label>
+      <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv, .txt" style="display:none;">
     </div>
 
     <textarea id="cancelInput" rows="3" placeholder="Atau paste daftar resi cancel manual di sini..."></textarea>
@@ -144,7 +143,7 @@
           playTone(650, 140, 'square');
           setTimeout(function() { playTone(650, 140, 'square'); }, 200);
           speakText("Paket double!");
-          if (navigator.vibrate) navigator.vibrate();
+          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }
       }
 
@@ -222,12 +221,41 @@
         scanInput.focus();
       }
 
-      // Fitur Baca File Excel / CSV langsung dari PDA / Laptop
-document.getElementById('excelFileInput').addEventListener('change', function(e) {
-var file = e.target.files[0];
-if (!file) return;
+      document.getElementById('excelFileInput').addEventListener('change', function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+
+var fileName = file.name.toLowerCase();
+var headerWords = ['NO_RESI', 'NOMOR_RESI', 'NOMOR RESI', 'RESI', 'AWB', 'NO_AWB', 'TRACKING NUMBER', 'TRACKING_NUMBER', 'WAYBILL', 'WAYBILL NO'];
+// Jalur 1: Jika file CSV atau TXT, langsung baca secara offline 100% tanpa internet
+if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
+var textReader = new FileReader();
+textReader.onload = function(evt) {
+var content = evt.target.result || '';
+var tokens = content.split(/[\r\n,;|\t]+/);
+var added = 0;
+for (var i = 0; i < tokens.length; i++) {
+var clean = tokens[i].replace(/['"]/g, '').trim().toUpperCase();
+if (clean.length >= 6 && /\d/.test(clean) && headerWords.indexOf(clean) === -1) {
+cancelSet.add(clean);
+added++;
+}
+}
+var pulled = cekUlangScanSebelumnya();
+saveAll();
+renderAll();
+if (pulled > 0) triggerAlert('cancel');
+alert('Berhasil mengimpor ' + added + ' resi dari CSV "' + file.name + '".\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
+e.target.value = '';
+scanInput.focus();
+};
+textReader.readAsText(file);
+return;
+}
+// Jalur 2: Jika file Excel (.xlsx / .xls), baca dengan SheetJS
 if (typeof XLSX === 'undefined') {
-alert('Pustaka Excel sedang dimuat, pastikan PDA terhubung internet lalu coba pilih file lagi.');
+alert('Modul Excel belum termuat. Pastikan internet aktif lalu refresh halaman, atau simpan file Excel Anda sebagai format .CSV agar bisa dibaca offline.');
+e.target.value = '';
 return;
 }
 var reader = new FileReader();
@@ -237,7 +265,6 @@ var data = new Uint8Array(evt.target.result);
 var workbook = XLSX.read(data, { type: 'array' });
 var firstSheet = workbook.Sheets[workbook.SheetNames[0]];
 var rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-var headerWords = ['NO_RESI', 'NOMOR_RESI', 'NOMOR RESI', 'RESI', 'AWB', 'NO_AWB', 'TRACKING NUMBER', 'TRACKING_NUMBER', 'WAYBILL', 'WAYBILL NO'];
 var added = 0;
 for (var r = 0; r < rows.length; r++) {
 var row = rows[r];
@@ -254,7 +281,7 @@ var pulled = cekUlangScanSebelumnya();
 saveAll();
 renderAll();
 if (pulled > 0) triggerAlert('cancel');
-alert('Berhasil mengimpor ' + added + ' resi dari file "' + file.name + '".\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
+alert('Berhasil mengimpor ' + added + ' resi dari Excel "' + file.name + '".\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
 } catch (err) {
 alert('Gagal membaca file Excel: ' + err.message);
 }
@@ -316,7 +343,7 @@ logs = [];
 saveAll();
 renderAll();
 statusBox.className = 'status ok';
-statusBox.textContent = 'STATUS: VERSI 5 AKTIF - SIAP SCAN';
+statusBox.textContent = 'STATUS: VERSI 6 AKTIF - SIAP SCAN';
 scanInput.focus();
 }
 };
