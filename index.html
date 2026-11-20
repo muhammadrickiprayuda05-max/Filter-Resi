@@ -3,11 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V9 - Official SDK Sync</title>
+  <title>Scanner Filter V10 - Cloud Sync</title>
   <script src="https://cloudflare.com"></script>
-  <!-- SDK Resmi Firebase (Anti-Blokir CORS & Real-Time Instan) -->
-  <script src="https://gstatic.com"></script>
-  <script src="https://gstatic.com"></script>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
@@ -45,7 +42,7 @@
 
   <div class="box">
     <div class="header-bar">
-      <h4>SCAN RESI (V9 - REALTIME SYNC)</h4>
+      <h4>SCAN RESI (V10 - CLOUD SYNC)</h4>
       <span id="syncStatus" class="sync-badge">🟡 MENGHUBUNGKAN...</span>
     </div>
 
@@ -56,7 +53,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">SISTEM V9 AKTIF - SIAP SCAN PAKET</div>
+    <div id="statusBox" class="status ok">SISTEM V10 AKTIF - SIAP SCAN PAKET</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -100,12 +97,8 @@
 
   <script>
     (function() {
-      var firebaseConfig = {
-        databaseURL: "https://firebasedatabase.app"
-      };
+      var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwCF9YJ-K5spJo8cLf_OEKwn3MOCRn5XcXziWUP3z6usqxiM3aAGcTJ0tByHI4MurUwog/exec";
 
-      var db = null;
-      var dataRef = null;
       var cancelSet = new Set();
       var logs = [];
       var scanInput = document.getElementById('scanInput');
@@ -115,48 +108,47 @@
       var ctxAudio = null;
       var lastVal = "";
       var idleCount = 0;
-
-      // Inisialisasi SDK Resmi Firebase
-      try {
-        firebase.initializeApp(firebaseConfig);
-        db = firebase.database();
-        dataRef = db.ref("gudang_data");
-
-        // Pantau status koneksi langsung dari Firebase
-        db.ref(".info/connected").on("value", function(snap) {
-          if (snap.val() === true) {
-            syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
-            syncBadge.className = "sync-badge";
-          } else {
-            syncBadge.textContent = "🔴 OFFLINE (Menyambung ulang...)";
-            syncBadge.className = "sync-badge sync-offline";
-          }
-        });
-
-        // Terima pembaruan data secara real-time tanpa jeda
-        dataRef.on("value", function(snapshot) {
-          var data = snapshot.val();
-          if (data) {
-            cancelSet = new Set(data.cancelList || []);
-            logs = data.scanLogs || [];
-          } else {
-            cancelSet = new Set();
-            logs = [];
-          }
-          renderAll();
-        });
-      } catch (err) {
-        syncBadge.textContent = "🔴 ERROR SDK: " + err.message;
-        syncBadge.className = "sync-badge sync-offline";
-      }
+      var isSending = false;
 
       function pushToCloud() {
-        if (!dataRef) return;
-        dataRef.set({
-          cancelList: Array.from(cancelSet),
-          scanLogs: logs.slice(0, 500)
+        isSending = true;
+        fetch(SCRIPT_URL, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({
+            cancelList: Array.from(cancelSet),
+            scanLogs: logs.slice(0, 500)
+          })
+        }).then(function() {
+          syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
+          syncBadge.className = "sync-badge";
+          setTimeout(function() { isSending = false; }, 1500);
+        }).catch(function() {
+          isSending = false;
         });
       }
+
+      function pullFromCloud() {
+        if (isSending) return;
+        fetch(SCRIPT_URL)
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
+            syncBadge.className = "sync-badge";
+            if (data) {
+              cancelSet = new Set(data.cancelList || []);
+              logs = data.scanLogs || [];
+            }
+            renderAll();
+          })
+          .catch(function() {
+            syncBadge.textContent = "🔴 OFFLINE (Menyambung...)";
+            syncBadge.className = "sync-badge sync-offline";
+          });
+      }
+
+      setInterval(pullFromCloud, 2000);
 
       function playTone(freq, ms, wave) {
         try {
@@ -200,7 +192,7 @@
           playTone(650, 140, 'square');
           setTimeout(function() { playTone(650, 140, 'square'); }, 200);
           speakText("Paket double!");
-          if (navigator.vibrate) navigator.vibrate();
+          if (navigator.vibrate) navigator.vibrate(300);
         }
       }
 
@@ -215,16 +207,17 @@
         for (var i = 0; i < sliceLogs.length; i++) {
           var x = sliceLogs.at(i);
           var bg = x.kode === 'CANCEL' ? '#f8d7da' : (x.kode === 'DOUBLE' ? '#fff3cd' : '#ffffff');
-html += '' + x.waktu + '' + x.resi + '' + x.label + '';
-}
-document.getElementById('logBody').innerHTML = html;
-}
-function cekUlangScanSebelumnya() {
-var pulled = 0;
-for (var j = 0; j < logs.length; j++) {
-var item = logs.at(j);
-if (item.kode === 'VALID' && cancelSet.has(item.resi)) {
-item.kode = 'CANCEL';
+          html += '<tr style="background:' + bg + '"><td>' + x.waktu + '</td><td><b>' + x.resi + '</b></td><td>' + x.label + '</td></tr>';
+        }
+        document.getElementById('logBody').innerHTML = html;
+      }
+
+      function cekUlangScanSebelumnya() {
+        var pulled = 0;
+        for (var j = 0; j < logs.length; j++) {
+          var item = logs.at(j);
+          if (item.kode === 'VALID' && cancelSet.has(item.resi)) {
+            item.kode = 'CANCEL';
 item.label = 'CANCEL (SUSULAN - TARIK!)';
 pulled++;
 }
@@ -297,7 +290,7 @@ textReader.readAsText(file);
 return;
 }
 if (typeof XLSX === 'undefined') {
-alert('Modul Excel belum termuat. Pastikan internet aktif lalu refresh halaman, atau gunakan format .CSV.');
+alert('Modul Excel belum termuat. Gunakan format .CSV atau paste manual.');
 e.target.value = '';
 return;
 }
@@ -387,7 +380,7 @@ logs = [];
 renderAll();
 pushToCloud();
 statusBox.className = 'status ok';
-statusBox.textContent = 'SISTEM V9 AKTIF - SIAP SCAN PAKET';
+statusBox.textContent = 'SISTEM V10 AKTIF - SIAP SCAN PAKET';
 scanInput.focus();
 }
 };
@@ -433,6 +426,7 @@ if (e.target !== cancelInput && e.target.tagName !== 'BUTTON' && e.target.tagNam
 scanInput.focus();
 }
 });
+pullFromCloud();
 scanInput.focus();
 })();
   </script>
