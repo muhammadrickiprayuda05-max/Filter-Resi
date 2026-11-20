@@ -39,13 +39,13 @@
     <h4>SCAN BARCODE RESI (AUTO-ENTER)</h4>
 
     <div class="test-bar">
-      <button type="button" class="btn-green" onclick="peringatanSuara('ok')">🔊 Tes Valid</button>
-      <button type="button" class="btn-red" onclick="peringatanSuara('cancel')">🗣️ Tes "Paket Cancel"</button>
-      <button type="button" class="btn-yellow" onclick="peringatanSuara('double')">🗣️ Tes "Paket Double"</button>
+      <button type="button" class="btn-green" onclick="tesSuara('ok')">🔊 Tes Valid</button>
+      <button type="button" class="btn-red" onclick="tesSuara('cancel')">🗣️ Tes "Paket Cancel"</button>
+      <button type="button" class="btn-yellow" onclick="tesSuara('double')">🗣️ Tes "Paket Double"</button>
     </div>
 
     <input type="text" id="scanInput" placeholder="Arahkan laser scan ke barcode..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">SIAP SCAN PAKET (Ketuk tombol Tes Suara sekali sebelum mulai)</div>
+    <div id="statusBox" class="status ok">SIAP SCAN PAKET (Klik tombol Tes Suara sekali sebelum mulai)</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -82,134 +82,110 @@
   </div>
 
   <script>
-    let cancelSet = new Set(JSON.parse(localStorage.getItem('pda_cancel') || '[]'));
-    let logs = JSON.parse(localStorage.getItem('pda_logs') || '[]');
-    const scanInput = document.getElementById('scanInput');
-    const cancelInput = document.getElementById('cancelInput');
-    let teksSebelumnya = "";
-    let hitungStabil = 0;
+    var cancelSet = new Set(JSON.parse(localStorage.getItem('pda_cancel') || '[]'));
+    var logs = JSON.parse(localStorage.getItem('pda_logs') || '[]');
+    var scanInput = document.getElementById('scanInput');
+    var cancelInput = document.getElementById('cancelInput');
+    var teksSebelumnya = "";
+    var hitungStabil = 0;
+    var ctxAudio = null;
 
-    function buatSuaraWAV(frekuensiList, durasiPerNada) {
-      const sampleRate = 22050;
-      const totalSamples = Math.floor(sampleRate * durasiPerNada * frekuensiList.length);
-      const buffer = new ArrayBuffer(44 + totalSamples * 2);
-      const view = new DataView(buffer);
-
-      function tulisString(offset, str) {
-        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-      }
-      tulisString(0, 'RIFF');
-      view.setUint32(4, 36 + totalSamples * 2, true);
-      tulisString(8, 'WAVE');
-      tulisString(12, 'fmt ');
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      tulisString(36, 'data');
-      view.setUint32(40, totalSamples * 2, true);
-
-      let offset = 44;
-      const samplesPerNada = Math.floor(sampleRate * durasiPerNada);
-      for (let n = 0; n < frekuensiList.length; n++) {
-        const freq = frekuensiList[n];
-        for (let i = 0; i < samplesPerNada; i++) {
-          const t = i / sampleRate;
-          const val = freq === 0 ? 0 : Math.sin(2 * Math.PI * freq * t) * 0.95;
-          view.setInt16(offset, val * 32767, true);
-          offset += 2;
+    function bunyiBeep(freq, durasi, tipe) {
+      try {
+        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!ctxAudio) {
+          ctxAudio = new AudioCtx();
         }
-      }
-      const blob = new Blob([buffer], { type: 'audio/wav' });
-      return URL.createObjectURL(blob);
+        if (ctxAudio.state === 'suspended') {
+          ctxAudio.resume();
+        }
+        var osc = ctxAudio.createOscillator();
+        var gain = ctxAudio.createGain();
+        osc.type = tipe;
+        osc.frequency.value = freq;
+        gain.gain.value = 1.0;
+        osc.connect(gain);
+        gain.connect(ctxAudio.destination);
+        osc.start();
+        setTimeout(function() {
+          osc.stop();
+        }, durasi);
+      } catch (err) {}
     }
 
-    const audioValidURL = buatSuaraWAV([1100], 0.12);
-    const audioCancelURL = buatSuaraWAV([300, 220, 180], 0.18);
-    const audioDoubleURL = buatSuaraWAV([650, 0, 650], 0.14);
-
-    function bicaraOnlineFallback(teks, jenis) {
-      if ('speechSynthesis' in window) {
-        try {
+    function bicaraManusia(kalimat) {
+      try {
+        if ('speechSynthesis' in window) {
           window.speechSynthesis.cancel();
-          const ucapan = new SpeechSynthesisUtterance(teks);
-          ucapan.lang = 'id-ID';
-          ucapan.rate = 1.0;
-          ucapan.volume = 1.0;
-          window.speechSynthesis.speak(ucapan);
-        } catch (e) {}
-      }
-
-      const player = new Audio(jenis === 'cancel' ? audioCancelURL : audioDoubleURL);
-      player.volume = 1.0;
-      player.play().catch(() => {});
-
-      setTimeout(() => {
-        try {
-          const urlTTS = `https://google.com{encodeURIComponent(teks)}`;
-          const ttsAudio = new Audio(urlTTS);
-          ttsAudio.volume = 1.0;
-          ttsAudio.play().catch(() => {});
-        } catch (e) {}
-      }, 250);
+          var msg = new SpeechSynthesisUtterance(kalimat);
+          msg.lang = 'id-ID';
+          msg.rate = 1.0;
+          msg.pitch = 1.0;
+          msg.volume = 1.0;
+          window.speechSynthesis.speak(msg);
+        }
+      } catch (err) {}
     }
 
-    function peringatanSuara(tipe) {
-      if (tipe === 'ok') {
-        const p = new Audio(audioValidURL);
-        p.volume = 1.0;
-        p.play().catch(() => {});
+    function tesSuara(jenis) {
+      if (jenis === 'ok') {
+        bunyiBeep(1000, 120, 'sine');
         if (navigator.vibrate) navigator.vibrate(70);
-      } else if (tipe === 'cancel') {
-        bicaraOnlineFallback("Paket cancel!", 'cancel');
+      } else if (jenis === 'cancel') {
+        bunyiBeep(220, 450, 'sawtooth');
+        bicaraManusia("Paket cancel!");
         if (navigator.vibrate) navigator.vibrate(700);
-      } else if (tipe === 'double') {
-        bicaraOnlineFallback("Paket double!", 'double');
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      } else if (jenis === 'double') {
+        bunyiBeep(650, 150, 'square');
+        setTimeout(function() {
+          bunyiBeep(650, 150, 'square');
+        }, 220);
+        bicaraManusia("Paket double!");
+        if (navigator.vibrate) navigator.vibrate(300);
       }
     }
 
     function simpanData() {
-      localStorage.setItem('pda_cancel', JSON.stringify([...cancelSet]));
+      localStorage.setItem('pda_cancel', JSON.stringify(Array.from(cancelSet)));
       localStorage.setItem('pda_logs', JSON.stringify(logs));
     }
 
     function prosesResi(nilaiMentah) {
-      const resi = nilaiMentah.replace(/[\r\n\t]+/g, '').trim().toUpperCase();
+      var resi = nilaiMentah.replace(/[\r\n\t]+/g, '').trim().toUpperCase();
       scanInput.value = '';
       teksSebelumnya = '';
       hitungStabil = 0;
       if (!resi) return;
 
-      const statusBox = document.getElementById('statusBox');
-      const sudahValid = logs.some(item => item.resi === resi && item.kode === 'VALID');
-      let kode = '', label = '';
+      var statusBox = document.getElementById('statusBox');
+      var sudahValid = logs.some(function(item) {
+        return item.resi === resi && item.kode === 'VALID';
+      });
+      var kode = '';
+      var label = '';
 
       if (cancelSet.has(resi)) {
         kode = 'CANCEL';
         label = 'CANCEL - TARIK PAKET!';
         statusBox.className = 'status cancel';
-        statusBox.innerText = `❌ ${resi}\nPAKET CANCEL!`;
-        peringatanSuara('cancel');
+        statusBox.innerText = '❌ ' + resi + '\nPAKET CANCEL!';
+        tesSuara('cancel');
       } else if (sudahValid) {
         kode = 'DOUBLE';
         label = 'DOUBLE SCAN!';
         statusBox.className = 'status double';
-        statusBox.innerText = `⚠️ ${resi}\nPAKET DOUBLE!`;
-        peringatanSuara('double');
+        statusBox.innerText = '⚠️ ' + resi + '\nPAKET DOUBLE!';
+        tesSuara('double');
       } else {
         kode = 'VALID';
         label = 'VALID (OK)';
         statusBox.className = 'status ok';
-        statusBox.innerText = `✅ ${resi} - VALID`;
-        peringatanSuara('ok');
+        statusBox.innerText = '✅ ' + resi + ' - VALID';
+        tesSuara('ok');
       }
 
-      const waktu = new Date().toLocaleTimeString('id-ID', { hour12: false });
-      logs.unshift({ waktu, resi, kode, label });
+      var waktu = new Date().toLocaleTimeString('id-ID', { hour12: false });
+      logs.unshift({ waktu: waktu, resi: resi, kode: kode, label: label });
       simpanData();
       renderUI();
       scanInput.focus();
@@ -222,8 +198,8 @@
       }
     });
 
-    setInterval(() => {
-      const nilaiSekarang = scanInput.value;
+    setInterval(function() {
+      var nilaiSekarang = scanInput.value;
       if (nilaiSekarang.trim().length >= 5) {
         if (nilaiSekarang === teksSebelumnya) {
           hitungStabil++;
@@ -234,3 +210,51 @@
           teksSebelumnya = nilaiSekarang;
           hitungStabil = 0;
         }
+      } else {
+        teksSebelumnya = nilaiSekarang;
+        hitungStabil = 0;
+      }
+    }, 100);
+
+    document.addEventListener('click', function(e) {
+      if (e.target !== cancelInput && e.target.tagName !== 'BUTTON') {
+        scanInput.focus();
+      }
+    });
+
+    function tambahCancel() {
+      var teks = cancelInput.value;
+      var baris = teks.split(/\r?\n/).map(function(s) {
+        return s.trim().toUpperCase();
+      }).filter(Boolean);
+      baris.forEach(function(r) {
+        cancelSet.add(r);
+      });
+      cancelInput.value = '';
+
+      var ditarik = 0;
+      logs.forEach(function(item) {
+        if (item.kode === 'VALID' && cancelSet.has(item.resi)) {
+          item.kode = 'CANCEL';
+          item.label = 'CANCEL (SUSULAN - TARIK!)';
+          ditarik++;
+        }
+      });
+
+      simpanData();
+      renderUI();
+      if (ditarik > 0) tesSuara('cancel');
+      alert('Berhasil menambah ' + baris.length + ' resi cancel.\nPaket terlanjur scan yang wajib ditarik: ' + ditarik + ' paket.');
+      scanInput.focus();
+    }
+
+    function hapusCancel() {
+      if (confirm('Kosongkan semua daftar resi cancel?')) {
+        cancelSet.clear();
+        simpanData();
+        renderUI();
+        scanInput.focus();
+      }
+    }
+
+    function resetSemua() {
