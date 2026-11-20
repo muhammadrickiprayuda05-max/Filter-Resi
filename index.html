@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V7 - Live Sync Multi-PDA</title>
+  <title>Scanner Filter V8 - Live Sync</title>
   <script src="https://cloudflare.com"></script>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
@@ -42,7 +42,7 @@
 
   <div class="box">
     <div class="header-bar">
-      <h4>SCAN RESI (V7 - LIVE SYNC)</h4>
+      <h4>SCAN RESI (V8 - LIVE SYNC)</h4>
       <span id="syncStatus" class="sync-badge">🟡 MENGHUBUNGKAN...</span>
     </div>
 
@@ -53,7 +53,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">LIVE SYNC AKTIF - SIAP SCAN PAKET</div>
+    <div id="statusBox" class="status ok">SISTEM V8 SIAP - MENUNGGU KONEKSI SYNC</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -97,7 +97,6 @@
 
   <script>
     (function() {
-      // URL Firebase Realtime Database Anda
       var DB_URL = "https://firebasedatabase.app";
 
       var cancelSet = new Set();
@@ -152,11 +151,10 @@
           playTone(650, 140, 'square');
           setTimeout(function() { playTone(650, 140, 'square'); }, 200);
           speakText("Paket double!");
-          if (navigator.vibrate) navigator.vibrate();
+          if (navigator.vibrate) navigator.vibrate(300);
         }
       }
 
-      // Sinkronisasi ke Cloud Firebase (Dibaca semua PDA secara real-time)
       function pushToCloud() {
         fetch(DB_URL + "/gudang_data.json", {
           method: "PUT",
@@ -165,18 +163,22 @@
             cancelList: Array.from(cancelSet),
             scanLogs: logs.slice(0, 500)
           })
-        }).then(function() {
+        }).then(function(res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
           syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
           syncBadge.className = "sync-badge";
-        }).catch(function() {
-          syncBadge.textContent = "🔴 OFFLINE";
+        }).catch(function(err) {
+          syncBadge.textContent = "🔴 OFFLINE (" + err.message + ")";
           syncBadge.className = "sync-badge sync-offline";
         });
       }
 
       function pullFromCloud() {
         fetch(DB_URL + "/gudang_data.json")
-          .then(function(res) { return res.json(); })
+          .then(function(res) {
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return res.json();
+          })
           .then(function(data) {
             syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
             syncBadge.className = "sync-badge";
@@ -189,13 +191,12 @@
             }
             renderAll();
           })
-          .catch(function() {
-            syncBadge.textContent = "🔴 OFFLINE";
+          .catch(function(err) {
+            syncBadge.textContent = "🔴 OFFLINE (" + err.message + ")";
             syncBadge.className = "sync-badge sync-offline";
           });
       }
 
-      // Tarik pembaruan dari server setiap 1.5 detik agar semua PDA selalu sinkron
       setInterval(pullFromCloud, 1500);
 
       function renderAll() {
@@ -207,7 +208,7 @@
         var html = '';
         var sliceLogs = logs.slice(0, 25);
         for (var i = 0; i < sliceLogs.length; i++) {
-          var x = sliceLogs[i];
+          var x = sliceLogs.item ? sliceLogs.item(i) : sliceLogs.at(i);
           var bg = x.kode === 'CANCEL' ? '#f8d7da' : (x.kode === 'DOUBLE' ? '#fff3cd' : '#ffffff');
           html += '<tr style="background:' + bg + '"><td>' + x.waktu + '</td><td><b>' + x.resi + '</b></td><td>' + x.label + '</td></tr>';
         }
@@ -215,11 +216,12 @@
       }
 
       function cekUlangScanSebelumnya() {
-        var pulled = 0;
+var pulled = 0;
 for (var j = 0; j < logs.length; j++) {
-if (logs[j].kode === 'VALID' && cancelSet.has(logs[j].resi)) {
-logs[j].kode = 'CANCEL';
-logs[j].label = 'CANCEL (SUSULAN - TARIK!)';
+var item = logs.at(j);
+if (item.kode === 'VALID' && cancelSet.has(item.resi)) {
+item.kode = 'CANCEL';
+item.label = 'CANCEL (SUSULAN - TARIK!)';
 pulled++;
 }
 }
@@ -262,10 +264,10 @@ pushToCloud();
 scanInput.focus();
 }
 document.getElementById('excelFileInput').addEventListener('change', function(e) {
-var file = e.target.files;
+var file = e.target.files.item(0);
 if (!file) return;
 var fileName = file.name.toLowerCase();
-var headerWords = ['NO_RESI', 'NOMOR_RESI', 'NOMOR RESI', 'RESI', 'AWB', 'NO_AWB', 'TRACKING NUMBER', 'TRACKING_NUMBER', 'WAYBILL', 'WAYBILL NO'];
+var headerWords = new Set(['NO_RESI', 'NOMOR_RESI', 'NOMOR RESI', 'RESI', 'AWB', 'NO_AWB', 'TRACKING NUMBER', 'TRACKING_NUMBER', 'WAYBILL', 'WAYBILL NO']);
 if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
 var textReader = new FileReader();
 textReader.onload = function(evt) {
@@ -273,8 +275,8 @@ var content = evt.target.result || '';
 var tokens = content.split(/[\r\n,;|\t]+/);
 var added = 0;
 for (var i = 0; i < tokens.length; i++) {
-var clean = tokens[i].replace(/['"]/g, '').trim().toUpperCase();
-if (clean.length >= 6 && /\d/.test(clean) && headerWords.indexOf(clean) === -1) {
+var clean = tokens.at(i).replace(/['"]/g, '').trim().toUpperCase();
+if (clean.length >= 6 && /\d/.test(clean) && !headerWords.has(clean)) {
 cancelSet.add(clean);
 added++;
 }
@@ -300,15 +302,16 @@ reader.onload = function(evt) {
 try {
 var data = new Uint8Array(evt.target.result);
 var workbook = XLSX.read(data, { type: 'array' });
-var firstSheet = workbook.Sheets[workbook.SheetNames];
+var firstSheetName = workbook.SheetNames.at(0);
+var firstSheet = workbook.Sheets[firstSheetName];
 var rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
 var added = 0;
 for (var r = 0; r < rows.length; r++) {
-var row = rows[r];
+var row = rows.at(r);
 if (!row) continue;
 for (var c = 0; c < row.length; c++) {
-var cell = String(row[c] || '').trim().toUpperCase();
-if (cell.length >= 6 && /\d/.test(cell) && headerWords.indexOf(cell) === -1) {
+var cell = String(row.at(c) || '').trim().toUpperCase();
+if (cell.length >= 6 && /\d/.test(cell) && !headerWords.has(cell)) {
 cancelSet.add(cell);
 added++;
 }
@@ -352,7 +355,7 @@ document.getElementById('btnSimpanCancel').onclick = function() {
 var lines = cancelInput.value.split(/\r?\n/);
 var added = 0;
 for (var i = 0; i < lines.length; i++) {
-var clean = lines[i].trim().toUpperCase();
+var clean = lines.at(i).trim().toUpperCase();
 if (clean) {
 cancelSet.add(clean);
 added++;
@@ -388,7 +391,8 @@ document.getElementById('btnExport').onclick = function() {
 var csv = "No,Waktu,Nomor_Resi,Status\n";
 var rev = logs.slice().reverse();
 for (var i = 0; i < rev.length; i++) {
-csv += (i + 1) + "," + rev[i].waktu + "," + rev[i].resi + ',"' + rev[i].label + '"\n';
+var r = rev.at(i);
+csv += (i + 1) + "," + r.waktu + "," + r.resi + ',"' + r.label + '"\n';
 }
 var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
 var a = document.createElement('a');
@@ -428,6 +432,9 @@ scanInput.focus();
 pullFromCloud();
 scanInput.focus();
 })();
-      </script>
-</body>
-</html>
+{
+  "rules": {
+    ".read": true,
+    ".write": true
+  }
+}
