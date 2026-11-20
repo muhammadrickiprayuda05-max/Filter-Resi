@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V4 - Ready</title>
+  <title>Scanner Filter V5 - Excel Import</title>
+  <!-- Pustaka pembaca file Excel (.xlsx / .xls / .csv) -->
+  <script src="https://jsdelivr.net"></script>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
@@ -20,12 +22,13 @@
     .stat-item { flex: 1; padding: 8px; border-radius: 6px; background: #f8f9fa; border: 1px solid #ddd; }
     .stat-num { font-size: 18px; font-weight: bold; display: block; }
     .btn-group { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-    button { flex: 1; padding: 10px; border: none; border-radius: 6px; color: #fff; font-weight: bold; font-size: 13px; cursor: pointer; }
+    button, .file-label { flex: 1; padding: 10px; border: none; border-radius: 6px; color: #fff; font-weight: bold; font-size: 13px; cursor: pointer; text-align: center; display: inline-block; }
     .btn-blue { background: #0066cc; }
     .btn-green { background: #28a745; }
     .btn-red { background: #dc3545; }
     .btn-yellow { background: #e0a800; color: #212529; }
     .btn-gray { background: #6c757d; }
+    .btn-purple { background: #6f42c1; }
     .test-bar { display: flex; gap: 5px; margin-bottom: 8px; }
     .test-bar button { padding: 8px; font-size: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
@@ -36,7 +39,7 @@
 <body>
 
   <div class="box">
-    <h4>SCAN BARCODE RESI (VERSI 4 - SIAP PAKAI)</h4>
+    <h4>SCAN BARCODE RESI (VERSI 5 - EXCEL)</h4>
 
     <div class="test-bar">
       <button type="button" class="btn-green" id="btnTesOk">🔊 Tes Valid</button>
@@ -45,7 +48,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">STATUS: SCRIPT AKTIF - SIAP SCAN</div>
+    <div id="statusBox" class="status ok">STATUS: VERSI 5 AKTIF - SIAP SCAN</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -60,8 +63,15 @@
   </div>
 
   <div class="box" id="cancelPanel" style="display:none;">
-    <h4>Tambah / Update Resi Cancel</h4>
-    <textarea id="cancelInput" rows="4" placeholder="Paste daftar resi cancel di sini (1 resi per baris)..."></textarea>
+    <h4>Import File Excel / Paste Resi Cancel</h4>
+
+    <!-- TOMBOL PILIH FILE EXCEL / CSV -->
+    <div class="btn-group" style="margin-bottom: 8px;">
+      <label for="excelFileInput" class="file-label btn-purple">📂 Pilih File Excel / CSV Cancel</label>
+      <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv" style="display:none;">
+    </div>
+
+    <textarea id="cancelInput" rows="3" placeholder="Atau paste daftar resi cancel manual di sini..."></textarea>
     <div class="btn-group">
       <button type="button" class="btn-blue" id="btnSimpanCancel">Simpan & Cek Ulang</button>
       <button type="button" class="btn-red" id="btnHapusCancel">Kosongkan Cancel</button>
@@ -134,7 +144,7 @@
           playTone(650, 140, 'square');
           setTimeout(function() { playTone(650, 140, 'square'); }, 200);
           speakText("Paket double!");
-          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+          if (navigator.vibrate) navigator.vibrate();
         }
       }
 
@@ -157,6 +167,18 @@
           html += '<tr style="background:' + bg + '"><td>' + x.waktu + '</td><td><b>' + x.resi + '</b></td><td>' + x.label + '</td></tr>';
         }
         document.getElementById('logBody').innerHTML = html;
+      }
+
+      function cekUlangScanSebelumnya() {
+        var pulled = 0;
+        for (var j = 0; j < logs.length; j++) {
+          if (logs[j].kode === 'VALID' && cancelSet.has(logs[j].resi)) {
+            logs[j].kode = 'CANCEL';
+            logs[j].label = 'CANCEL (SUSULAN - TARIK!)';
+            pulled++;
+          }
+        }
+        return pulled;
       }
 
       function processScan(raw) {
@@ -200,34 +222,71 @@
         scanInput.focus();
       }
 
-      document.getElementById('btnTesOk').onclick = function() {
-        statusBox.textContent = 'TES SUARA: VALID';
-        triggerAlert('ok');
-        scanInput.focus();
-      };
-
-      document.getElementById('btnTesCancel').onclick = function() {
-        statusBox.textContent = 'TES SUARA: PAKET CANCEL!';
-        triggerAlert('cancel');
-        scanInput.focus();
-      };
-
-      document.getElementById('btnTesDouble').onclick = function() {
-        statusBox.textContent = 'TES SUARA: PAKET DOUBLE!';
-        triggerAlert('double');
-        scanInput.focus();
-      };
-
-      document.getElementById('btnToggleCancel').onclick = function() {
-        var p = document.getElementById('cancelPanel');
-        p.style.display = p.style.display === 'none' ? 'block' : 'none';
-        if (p.style.display === 'block') cancelInput.focus();
-        else scanInput.focus();
-      };
-
-      document.getElementById('btnSimpanCancel').onclick = function() {
-        var lines = cancelInput.value.split(/\r?\n/);
-        var added = 0;
+      // Fitur Baca File Excel / CSV langsung dari PDA / Laptop
+document.getElementById('excelFileInput').addEventListener('change', function(e) {
+var file = e.target.files[0];
+if (!file) return;
+if (typeof XLSX === 'undefined') {
+alert('Pustaka Excel sedang dimuat, pastikan PDA terhubung internet lalu coba pilih file lagi.');
+return;
+}
+var reader = new FileReader();
+reader.onload = function(evt) {
+try {
+var data = new Uint8Array(evt.target.result);
+var workbook = XLSX.read(data, { type: 'array' });
+var firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+var rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+var headerWords = ['NO_RESI', 'NOMOR_RESI', 'NOMOR RESI', 'RESI', 'AWB', 'NO_AWB', 'TRACKING NUMBER', 'TRACKING_NUMBER', 'WAYBILL', 'WAYBILL NO'];
+var added = 0;
+for (var r = 0; r < rows.length; r++) {
+var row = rows[r];
+if (!row) continue;
+for (var c = 0; c < row.length; c++) {
+var cell = String(row[c] || '').trim().toUpperCase();
+if (cell.length >= 6 && /\d/.test(cell) && headerWords.indexOf(cell) === -1) {
+cancelSet.add(cell);
+added++;
+}
+}
+}
+var pulled = cekUlangScanSebelumnya();
+saveAll();
+renderAll();
+if (pulled > 0) triggerAlert('cancel');
+alert('Berhasil mengimpor ' + added + ' resi dari file "' + file.name + '".\nPaket terlanjur scan wajib ditarik: ' + pulled + ' paket.');
+} catch (err) {
+alert('Gagal membaca file Excel: ' + err.message);
+}
+e.target.value = '';
+scanInput.focus();
+};
+reader.readAsArrayBuffer(file);
+});
+document.getElementById('btnTesOk').onclick = function() {
+statusBox.textContent = 'TES SUARA: VALID';
+triggerAlert('ok');
+scanInput.focus();
+};
+document.getElementById('btnTesCancel').onclick = function() {
+statusBox.textContent = 'TES SUARA: PAKET CANCEL!';
+triggerAlert('cancel');
+scanInput.focus();
+};
+document.getElementById('btnTesDouble').onclick = function() {
+statusBox.textContent = 'TES SUARA: PAKET DOUBLE!';
+triggerAlert('double');
+scanInput.focus();
+};
+document.getElementById('btnToggleCancel').onclick = function() {
+var p = document.getElementById('cancelPanel');
+p.style.display = p.style.display === 'none' ? 'block' : 'none';
+if (p.style.display === 'block') cancelInput.focus();
+else scanInput.focus();
+};
+document.getElementById('btnSimpanCancel').onclick = function() {
+var lines = cancelInput.value.split(/\r?\n/);
+var added = 0;
 for (var i = 0; i < lines.length; i++) {
 var clean = lines[i].trim().toUpperCase();
 if (clean) {
@@ -236,14 +295,7 @@ added++;
 }
 }
 cancelInput.value = '';
-var pulled = 0;
-for (var j = 0; j < logs.length; j++) {
-if (logs[j].kode === 'VALID' && cancelSet.has(logs[j].resi)) {
-logs[j].kode = 'CANCEL';
-logs[j].label = 'CANCEL (SUSULAN - TARIK!)';
-pulled++;
-}
-}
+var pulled = cekUlangScanSebelumnya();
 saveAll();
 renderAll();
 if (pulled > 0) triggerAlert('cancel');
@@ -264,7 +316,7 @@ logs = [];
 saveAll();
 renderAll();
 statusBox.className = 'status ok';
-statusBox.textContent = 'STATUS: SCRIPT AKTIF - SIAP SCAN';
+statusBox.textContent = 'STATUS: VERSI 5 AKTIF - SIAP SCAN';
 scanInput.focus();
 }
 };
@@ -305,13 +357,13 @@ idleCount = 0;
 }
 }, 100);
 document.addEventListener('click', function(e) {
-if (e.target !== cancelInput && e.target.tagName !== 'BUTTON') {
+if (e.target !== cancelInput && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'LABEL' && e.target.tagName !== 'INPUT') {
 scanInput.focus();
 }
 });
 renderAll();
 scanInput.focus();
 })();
-  </script>
+      </script>
 </body>
 </html>
