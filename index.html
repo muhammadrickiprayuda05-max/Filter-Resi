@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V2 - Auto & Voice</title>
+  <title>Scanner Filter V3 - Final</title>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
@@ -36,7 +36,7 @@
 <body>
 
   <div class="box">
-    <h4>SCAN BARCODE RESI (VERSI 2 - AUTO)</h4>
+    <h4>SCAN BARCODE RESI (VERSI 3 - FINAL)</h4>
 
     <div class="test-bar">
       <button type="button" class="btn-green" onclick="tesSuara('ok')">🔊 Tes Valid</button>
@@ -45,7 +45,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini (otomatis terproses)..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">SISTEM V2 AKTIF - SIAP SCAN PAKET</div>
+    <div id="statusBox" class="status ok">VERSI 3 AKTIF - KLIK TOMBOL TES SUARA 1X LALU MULAI SCAN</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -87,7 +87,8 @@
     var scanInput = document.getElementById('scanInput');
     var cancelInput = document.getElementById('cancelInput');
     var ctxAudio = null;
-    var jedaKetik = null;
+    var teksTerakhir = "";
+    var hitungDiam = 0;
 
     function bunyiBeep(freq, durasi, tipe) {
       try {
@@ -131,7 +132,7 @@
         bunyiBeep(650, 140, 'square');
         setTimeout(function() { bunyiBeep(650, 140, 'square'); }, 200);
         bicaraManusia("Paket double!");
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        if (navigator.vibrate) navigator.vibrate(300);
       }
     }
 
@@ -141,9 +142,10 @@
     }
 
     function prosesResi(nilaiMentah) {
-      clearTimeout(jedaKetik);
       var resi = nilaiMentah.replace(/[\r\n\t]+/g, '').trim().toUpperCase();
       scanInput.value = '';
+      teksTerakhir = '';
+      hitungDiam = 0;
       if (!resi) return;
 
       var statusBox = document.getElementById('statusBox');
@@ -180,7 +182,7 @@
       scanInput.focus();
     }
 
-    // 1. Tangkap tombol Enter / Tab
+    // 1. Tangkap tombol Enter / Tab fisik
     scanInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' || e.keyCode === 13 || e.key === 'Tab') {
         e.preventDefault();
@@ -188,16 +190,24 @@
       }
     });
 
-    // 2. Auto-proses 200ms setelah scanner selesai memasukkan karakter (tanpa Enter)
-    scanInput.addEventListener('input', function() {
-      clearTimeout(jedaKetik);
-      var isi = this.value;
-      if (isi.trim().length >= 5) {
-        jedaKetik = setTimeout(function() {
-          prosesResi(scanInput.value);
-        }, 200);
+    // 2. Pemantau aktif setiap 100ms (100% menangkap tembakan scanner USB/Bluetooth/PDA tanpa Enter)
+    setInterval(function() {
+      var isiSekarang = scanInput.value;
+      if (isiSekarang.trim().length >= 5) {
+        if (isiSekarang === teksTerakhir) {
+          hitungDiam++;
+          if (hitungDiam >= 2) {
+            prosesResi(isiSekarang);
+          }
+        } else {
+          teksTerakhir = isiSekarang;
+          hitungDiam = 0;
+        }
+      } else {
+        teksTerakhir = isiSekarang;
+        hitungDiam = 0;
       }
-    });
+    }, 100);
 
     document.addEventListener('click', function(e) {
       if (e.target !== cancelInput && e.target.tagName !== 'BUTTON') {
@@ -239,10 +249,3 @@
     }
 
     function resetSemua() {
-      if (confirm('Hapus semua riwayat scan untuk mulai shift baru?')) {
-        logs = [];
-        simpanData();
-        renderUI();
-        document.getElementById('statusBox').className = 'status ok';
-        document.getElementById('statusBox').innerText = 'SISTEM V2 AKTIF - SIAP SCAN PAKET';
-        scanInput.focus();
