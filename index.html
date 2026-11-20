@@ -35,11 +35,9 @@
 </head>
 <body>
 
-  <!-- AREA SCAN UTAMA -->
   <div class="box">
     <h4>SCAN BARCODE RESI (AUTO-ENTER)</h4>
 
-    <!-- TOMBOL TES SUARA -->
     <div class="test-bar">
       <button type="button" class="btn-green" onclick="peringatanSuara('ok')">🔊 Tes Valid</button>
       <button type="button" class="btn-red" onclick="peringatanSuara('cancel')">🗣️ Tes "Paket Cancel"</button>
@@ -61,7 +59,6 @@
     </div>
   </div>
 
-  <!-- PANEL INPUT DATA CANCEL -->
   <div class="box" id="cancelPanel" style="display:none;">
     <h4>Tambah / Update Resi Cancel (Jam 10 / 12 / dst)</h4>
     <textarea id="cancelInput" rows="4" placeholder="Paste daftar resi cancel di sini (1 resi per baris)..."></textarea>
@@ -71,7 +68,6 @@
     </div>
   </div>
 
-  <!-- RIWAYAT SCAN TERAKHIR -->
   <div class="box">
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <h4>Riwayat Scan (20 Terakhir)</h4>
@@ -90,66 +86,88 @@
     let logs = JSON.parse(localStorage.getItem('pda_logs') || '[]');
     const scanInput = document.getElementById('scanInput');
     const cancelInput = document.getElementById('cancelInput');
-    let audioCtx = null;
     let teksSebelumnya = "";
     let hitungStabil = 0;
 
-    // Buka kunci audio otomatis pada sentuhan layar pertama
-    function bukaKunciAudio() {
-      try {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (!audioCtx) audioCtx = new AudioContextClass();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-      } catch (e) {}
+    function buatSuaraWAV(frekuensiList, durasiPerNada) {
+      const sampleRate = 22050;
+      const totalSamples = Math.floor(sampleRate * durasiPerNada * frekuensiList.length);
+      const buffer = new ArrayBuffer(44 + totalSamples * 2);
+      const view = new DataView(buffer);
+
+      function tulisString(offset, str) {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      }
+      tulisString(0, 'RIFF');
+      view.setUint32(4, 36 + totalSamples * 2, true);
+      tulisString(8, 'WAVE');
+      tulisString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      tulisString(36, 'data');
+      view.setUint32(40, totalSamples * 2, true);
+
+      let offset = 44;
+      const samplesPerNada = Math.floor(sampleRate * durasiPerNada);
+      for (let n = 0; n < frekuensiList.length; n++) {
+        const freq = frekuensiList[n];
+        for (let i = 0; i < samplesPerNada; i++) {
+          const t = i / sampleRate;
+          const val = freq === 0 ? 0 : Math.sin(2 * Math.PI * freq * t) * 0.95;
+          view.setInt16(offset, val * 32767, true);
+          offset += 2;
+        }
+      }
+      const blob = new Blob([buffer], { type: 'audio/wav' });
+      return URL.createObjectURL(blob);
     }
-    document.addEventListener('touchstart', bukaKunciAudio, { once: true });
-    document.addEventListener('click', bukaKunciAudio, { once: true });
 
-    function bicara(teks) {
-      if (!('speechSynthesis' in window)) return;
-      try {
-        window.speechSynthesis.cancel();
-        const ucapan = new SpeechSynthesisUtterance(teks);
-        ucapan.lang = 'id-ID';
-        ucapan.rate = 1.0;
-        ucapan.pitch = 1.0;
-        ucapan.volume = 1.0;
-        window.speechSynthesis.speak(ucapan);
-      } catch (e) {}
-    }
+    const audioValidURL = buatSuaraWAV([1100], 0.12);
+    const audioCancelURL = buatSuaraWAV([300, 220, 180], 0.18);
+    const audioDoubleURL = buatSuaraWAV([650, 0, 650], 0.14);
 
-    function nadaPeringatan(frekuensi, durasi, gelombang) {
-      try {
-        bukaKunciAudio();
-        const now = audioCtx.currentTime;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = gelombang || 'sine';
-        osc.frequency.setValueAtTime(frekuensi, now);
-        gain.gain.setValueAtTime(1.0, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + durasi);
+    function bicaraOnlineFallback(teks, jenis) {
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+          const ucapan = new SpeechSynthesisUtterance(teks);
+          ucapan.lang = 'id-ID';
+          ucapan.rate = 1.0;
+          ucapan.volume = 1.0;
+          window.speechSynthesis.speak(ucapan);
+        } catch (e) {}
+      }
 
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start(now);
-        osc.stop(now + durasi);
-      } catch (e) {}
+      const player = new Audio(jenis === 'cancel' ? audioCancelURL : audioDoubleURL);
+      player.volume = 1.0;
+      player.play().catch(() => {});
+
+      setTimeout(() => {
+        try {
+          const urlTTS = `https://google.com{encodeURIComponent(teks)}`;
+          const ttsAudio = new Audio(urlTTS);
+          ttsAudio.volume = 1.0;
+          ttsAudio.play().catch(() => {});
+        } catch (e) {}
+      }, 250);
     }
 
     function peringatanSuara(tipe) {
       if (tipe === 'ok') {
-        nadaPeringatan(1100, 0.12, 'sine');
+        const p = new Audio(audioValidURL);
+        p.volume = 1.0;
+        p.play().catch(() => {});
         if (navigator.vibrate) navigator.vibrate(70);
-
       } else if (tipe === 'cancel') {
-        nadaPeringatan(220, 0.30, 'sawtooth');
-        bicara("Paket cancel!");
-        if (navigator.vibrate) navigator.vibrate(650);
-
+        bicaraOnlineFallback("Paket cancel!", 'cancel');
+        if (navigator.vibrate) navigator.vibrate(700);
       } else if (tipe === 'double') {
-        nadaPeringatan(650, 0.15, 'square');
-        setTimeout(() => nadaPeringatan(650, 0.15, 'square'), 200);
-        bicara("Paket double!");
+        bicaraOnlineFallback("Paket double!", 'double');
         if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
       }
     }
@@ -197,7 +215,6 @@
       scanInput.focus();
     }
 
-    // 1. Tangkap tombol Enter / OK fisik pada keypad iData K1
     scanInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' || e.keyCode === 13 || e.key === 'Tab') {
         e.preventDefault();
@@ -205,13 +222,11 @@
       }
     });
 
-    // 2. PEMANTAU OTOMATIS 100ms (Menangkap injeksi teks dari laser iData K1 tanpa perlu Enter)
     setInterval(() => {
       const nilaiSekarang = scanInput.value;
       if (nilaiSekarang.trim().length >= 5) {
         if (nilaiSekarang === teksSebelumnya) {
           hitungStabil++;
-          // Jika teks sudah berhenti masuk selama 100ms (1 siklus), langsung proses otomatis
           if (hitungStabil >= 1) {
             prosesResi(nilaiSekarang);
           }
@@ -219,23 +234,3 @@
           teksSebelumnya = nilaiSekarang;
           hitungStabil = 0;
         }
-      } else {
-        teksSebelumnya = nilaiSekarang;
-        hitungStabil = 0;
-      }
-    }, 100);
-
-    document.addEventListener('click', function(e) {
-      if (e.target !== cancelInput && e.target.tagName !== 'BUTTON') {
-        scanInput.focus();
-      }
-    });
-
-    function tambahCancel() {
-      const teks = cancelInput.value;
-      const baris = teks.split(/\r?\n/).map(s => s.trim().toUpperCase()).filter(Boolean);
-      baris.forEach(r => cancelSet.add(r));
-      cancelInput.value = '';
-
-      let ditarik = 0;
-      logs.forEach(item => {
