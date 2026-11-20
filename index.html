@@ -3,8 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Scanner Filter V8 - Live Sync</title>
+  <title>Scanner Filter V9 - Official SDK Sync</title>
   <script src="https://cloudflare.com"></script>
+  <!-- SDK Resmi Firebase (Anti-Blokir CORS & Real-Time Instan) -->
+  <script src="https://gstatic.com"></script>
+  <script src="https://gstatic.com"></script>
   <style>
     * { box-sizing: border-box; font-family: Arial, sans-serif; }
     body { margin: 0; padding: 10px; background: #eef1f5; font-size: 14px; }
@@ -42,7 +45,7 @@
 
   <div class="box">
     <div class="header-bar">
-      <h4>SCAN RESI (V8 - LIVE SYNC)</h4>
+      <h4>SCAN RESI (V9 - REALTIME SYNC)</h4>
       <span id="syncStatus" class="sync-badge">🟡 MENGHUBUNGKAN...</span>
     </div>
 
@@ -53,7 +56,7 @@
     </div>
 
     <input type="text" id="scanInput" placeholder="Scan resi di sini..." autofocus autocomplete="off">
-    <div id="statusBox" class="status ok">SISTEM V8 SIAP - MENUNGGU KONEKSI SYNC</div>
+    <div id="statusBox" class="status ok">SISTEM V9 AKTIF - SIAP SCAN PAKET</div>
 
     <div class="stats">
       <div class="stat-item"><span class="stat-num" id="cValid" style="color:#28a745">0</span>Valid</div>
@@ -97,8 +100,12 @@
 
   <script>
     (function() {
-      var DB_URL = "https://firebasedatabase.app";
+      var firebaseConfig = {
+        databaseURL: "https://firebasedatabase.app"
+      };
 
+      var db = null;
+      var dataRef = null;
       var cancelSet = new Set();
       var logs = [];
       var scanInput = document.getElementById('scanInput');
@@ -108,6 +115,48 @@
       var ctxAudio = null;
       var lastVal = "";
       var idleCount = 0;
+
+      // Inisialisasi SDK Resmi Firebase
+      try {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.database();
+        dataRef = db.ref("gudang_data");
+
+        // Pantau status koneksi langsung dari Firebase
+        db.ref(".info/connected").on("value", function(snap) {
+          if (snap.val() === true) {
+            syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
+            syncBadge.className = "sync-badge";
+          } else {
+            syncBadge.textContent = "🔴 OFFLINE (Menyambung ulang...)";
+            syncBadge.className = "sync-badge sync-offline";
+          }
+        });
+
+        // Terima pembaruan data secara real-time tanpa jeda
+        dataRef.on("value", function(snapshot) {
+          var data = snapshot.val();
+          if (data) {
+            cancelSet = new Set(data.cancelList || []);
+            logs = data.scanLogs || [];
+          } else {
+            cancelSet = new Set();
+            logs = [];
+          }
+          renderAll();
+        });
+      } catch (err) {
+        syncBadge.textContent = "🔴 ERROR SDK: " + err.message;
+        syncBadge.className = "sync-badge sync-offline";
+      }
+
+      function pushToCloud() {
+        if (!dataRef) return;
+        dataRef.set({
+          cancelList: Array.from(cancelSet),
+          scanLogs: logs.slice(0, 500)
+        });
+      }
 
       function playTone(freq, ms, wave) {
         try {
@@ -151,53 +200,9 @@
           playTone(650, 140, 'square');
           setTimeout(function() { playTone(650, 140, 'square'); }, 200);
           speakText("Paket double!");
-          if (navigator.vibrate) navigator.vibrate(300);
+          if (navigator.vibrate) navigator.vibrate();
         }
       }
-
-      function pushToCloud() {
-        fetch(DB_URL + "/gudang_data.json", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cancelList: Array.from(cancelSet),
-            scanLogs: logs.slice(0, 500)
-          })
-        }).then(function(res) {
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
-          syncBadge.className = "sync-badge";
-        }).catch(function(err) {
-          syncBadge.textContent = "🔴 OFFLINE (" + err.message + ")";
-          syncBadge.className = "sync-badge sync-offline";
-        });
-      }
-
-      function pullFromCloud() {
-        fetch(DB_URL + "/gudang_data.json")
-          .then(function(res) {
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            return res.json();
-          })
-          .then(function(data) {
-            syncBadge.textContent = "🟢 LIVE SYNC AKTIF";
-            syncBadge.className = "sync-badge";
-            if (data) {
-              cancelSet = new Set(data.cancelList || []);
-              logs = data.scanLogs || [];
-            } else {
-              cancelSet = new Set();
-              logs = [];
-            }
-            renderAll();
-          })
-          .catch(function(err) {
-            syncBadge.textContent = "🔴 OFFLINE (" + err.message + ")";
-            syncBadge.className = "sync-badge sync-offline";
-          });
-      }
-
-      setInterval(pullFromCloud, 1500);
 
       function renderAll() {
         document.getElementById('cListCount').textContent = cancelSet.size;
@@ -208,14 +213,13 @@
         var html = '';
         var sliceLogs = logs.slice(0, 25);
         for (var i = 0; i < sliceLogs.length; i++) {
-          var x = sliceLogs.item ? sliceLogs.item(i) : sliceLogs.at(i);
+          var x = sliceLogs.at(i);
           var bg = x.kode === 'CANCEL' ? '#f8d7da' : (x.kode === 'DOUBLE' ? '#fff3cd' : '#ffffff');
-          html += '<tr style="background:' + bg + '"><td>' + x.waktu + '</td><td><b>' + x.resi + '</b></td><td>' + x.label + '</td></tr>';
-        }
-        document.getElementById('logBody').innerHTML = html;
-      }
-
-      function cekUlangScanSebelumnya() {
+html += '' + x.waktu + '' + x.resi + '' + x.label + '';
+}
+document.getElementById('logBody').innerHTML = html;
+}
+function cekUlangScanSebelumnya() {
 var pulled = 0;
 for (var j = 0; j < logs.length; j++) {
 var item = logs.at(j);
@@ -383,7 +387,7 @@ logs = [];
 renderAll();
 pushToCloud();
 statusBox.className = 'status ok';
-statusBox.textContent = 'LIVE SYNC AKTIF - SIAP SCAN PAKET';
+statusBox.textContent = 'SISTEM V9 AKTIF - SIAP SCAN PAKET';
 scanInput.focus();
 }
 };
@@ -429,10 +433,8 @@ if (e.target !== cancelInput && e.target.tagName !== 'BUTTON' && e.target.tagNam
 scanInput.focus();
 }
 });
-pullFromCloud();
 scanInput.focus();
 })();
   </script>
 </body>
 </html>
-
