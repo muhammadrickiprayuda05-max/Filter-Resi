@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Auto Sync Scanner V10 ke QianYi Weigh & Ship (TURBO)
+// @name         Auto Sync Scanner V10 ke QianYi Weigh & Ship (QUEUE V3.0)
 // @namespace    http://tampermonkey.net
-// @version      2.0
-// @description  Pengiriman resi VALID super cepat (0ms Bypass + Turbo Enter) ke QianYi WMS
+// @version      3.0
+// @description  Sistem antrean FIFO anti-hilang untuk meneruskan seluruh resi VALID ke QianYi WMS
 // @match        *://*.github.io/*
 // @match        *://*.best-inc.com/*
 // @grant        GM_setValue
@@ -15,94 +15,98 @@
     const currentUrl = window.location.href;
 
     // =========================================================================
-    // BAGIAN 1: PENGIRIM TURBO DI TAB SCANNER FILTER V10
+    // BAGIAN 1: PENGIRIM ANTREAN (MEMBACA SELURUH BARIS BARU TANPA TERTIMPA)
     // =========================================================================
     if (currentUrl.includes('github.io')) {
-        let lastSentResi = '';
-        let lastSentTime = 0;
+        const sudahDikirim = new Set();
+        let inisialisasiSelesai = false;
 
         const v10Badge = document.createElement('div');
         v10Badge.style.cssText = 'position:fixed;bottom:15px;right:15px;background:#16a34a;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:bold;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-        v10Badge.innerText = '🚀 Turbo V2.0 Aktif';
+        v10Badge.innerText = '📦 Antrean V3.0 Siap';
         document.body.appendChild(v10Badge);
 
-        const kirimKeWMS = (noResi) => {
-            const cleanResi = noResi.trim().replace(/\s+/g, '');
-            if (!cleanResi || cleanResi.length < 6) return;
+        const tambahKeAntreanWMS = (noResi, keyUnik) => {
+            const rawQueue = GM_getValue('wms_resi_queue', '[]');
+            let queue = [];
+            try { queue = JSON.parse(rawQueue); } catch (e) { queue = []; }
 
-            // Cegah pengiriman ganda dalam 1.5 detik untuk resi yang sama
-            const now = Date.now();
-            if (cleanResi === lastSentResi && (now - lastSentTime) < 1500) return;
+            queue.push({
+                id: keyUnik,
+                resi: noResi,
+                time: Date.now()
+            });
 
-            lastSentResi = cleanResi;
-            lastSentTime = now;
+            // Batasi maksimal 100 antrean terakhir agar memori tetap ringan
+            if (queue.length > 100) queue = queue.slice(-100);
 
+            GM_setValue('wms_resi_queue', JSON.stringify(queue));
             v10Badge.style.background = '#2563eb';
-            v10Badge.innerText = '⚡ Kirim Cepat: ' + cleanResi;
-
-            GM_setValue('resi_valid_terbaru', JSON.stringify({
-                resi: cleanResi,
-                id: now + Math.random()
-            }));
+            v10Badge.innerText = '📤 Masuk Antrean: ' + noResi;
         };
 
-        // JALUR 1: Pantau tabel riwayat (untuk kiriman dari PDA / Cloud Sync)
-        let lastRowSignature = '';
-        const cekTabelRiwayat = () => {
-            const latestRow = document.querySelector('table tbody tr');
-            if (!latestRow) return;
+        const pindaiSemuaBarisTabel = () => {
+            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+            if (rows.length === 0) return;
 
-            const cells = latestRow.querySelectorAll('td');
-            if (cells.length < 3) return;
+            // Balik urutan (dari bawah ke atas) agar urutan scan masuk sesuai kronologi
+            const barisUrut = rows.reverse();
 
-            // Di tabel V10: Kolom 0 = Waktu, Kolom 1 = No. Resi, Kolom 2 = Status
-            const waktu = cells[0].innerText.trim();
-            const noResi = cells[1].innerText.trim();
-            const status = cells[2].innerText.trim().toUpperCase();
-            const signature = waktu + '_' + noResi;
+            for (const row of barisUrut) {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 3) continue;
 
-            if (!noResi || signature === lastRowSignature) return;
-            lastRowSignature = signature;
+                const waktu = cells[0].innerText.trim();
+                const noResi = cells[1].innerText.trim().replace(/\s+/g, '');
+                const status = cells[2].innerText.trim().toUpperCase();
 
-            if (status.includes('CANCEL') || status.includes('DOUBLE') || status.includes('DUPLIKAT')) {
-                v10Badge.style.background = '#dc2626';
-                v10Badge.innerText = '⛔ Diblokir: ' + noResi;
-                return;
-            }
+                if (!noResi || noResi.length < 6) continue;
+                const keyUnik = waktu + '_' + noResi;
 
-            if (status.includes('VALID') || status.includes('OK')) {
-                kirimKeWMS(noResi);
-            }
-        };
+                if (sudahDikirim.has(keyUnik)) continue;
+                sudahDikirim.add(keyUnik);
 
-        setTimeout(() => {
-            const initRow = document.querySelector('table tbody tr');
-            if (initRow) {
-                const cells = initRow.querySelectorAll('td');
-                if (cells.length >= 2) {
-                    lastRowSignature = cells[0].innerText.trim() + '_' + cells[1].innerText.trim();
+                // Jangan kirim ulang data lama yang sudah ada sebelum halaman di-refresh
+                if (!inisialisasiSelesai) continue;
+
+                if (status.includes('CANCEL') || status.includes('DOUBLE') || status.includes('DUPLIKAT')) {
+                    v10Badge.style.background = '#dc2626';
+                    v10Badge.innerText = '⛔ Diblokir: ' + noResi;
+                    continue;
+                }
+
+                if (status.includes('VALID') || status.includes('OK')) {
+                    tambahKeAntreanWMS(noResi, keyUnik);
                 }
             }
+        };
+
+        // Catat semua baris lama saat halaman pertama dibuka
+        setTimeout(() => {
+            pindaiSemuaBarisTabel();
+            inisialisasiSelesai = true;
 
             const tbody = document.querySelector('table tbody');
             if (tbody) {
-                const observer = new MutationObserver(cekTabelRiwayat);
+                const observer = new MutationObserver(pindaiSemuaBarisTabel);
                 observer.observe(tbody, { childList: true, subtree: true, characterData: true });
             }
-        }, 400);
+        }, 500);
 
-        setInterval(cekTabelRiwayat, 40);
+        setInterval(pindaiSemuaBarisTabel, 60);
     }
 
     // =========================================================================
-    // BAGIAN 2: PENERIMA TURBO DI QIANYI WMS (TANPA JEDA / ZERO-TIMEOUT)
+    // BAGIAN 2: EKSEKUTOR ANTREAN DI QIANYI WMS (SATU PER SATU ANTI-TERLEWAT)
     // =========================================================================
     if (currentUrl.includes('best-inc.com')) {
-        let lastProcessedId = 0;
+        const wmsSelesai = new Set();
+        let sedangInput = false;
+        let inisialisasiWMS = false;
 
         const wmsBadge = document.createElement('div');
         wmsBadge.style.cssText = 'position:fixed;bottom:15px;right:15px;background:#16a34a;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:bold;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-        wmsBadge.innerText = '🚀 WMS Turbo V2.0 Siap';
+        wmsBadge.innerText = '📦 WMS Antrean V3.0 Aktif';
         document.body.appendChild(wmsBadge);
 
         let cachedInput = null;
@@ -125,40 +129,58 @@
         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
         const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
 
+        // Tandai antrean lama yang sudah ada sebelum tab WMS di-refresh
+        setTimeout(() => {
+            const rawQueue = GM_getValue('wms_resi_queue', '[]');
+            try {
+                const queue = JSON.parse(rawQueue);
+                queue.forEach(item => wmsSelesai.add(item.id));
+            } catch (e) {}
+            inisialisasiWMS = true;
+        }, 400);
+
         setInterval(() => {
-            const rawData = GM_getValue('resi_valid_terbaru', '');
-            if (!rawData) return;
+            if (!inisialisasiWMS || sedangInput) return;
 
-            let data;
-            try { data = JSON.parse(rawData); } catch (e) { return; }
+            const rawQueue = GM_getValue('wms_resi_queue', '[]');
+            let queue = [];
+            try { queue = JSON.parse(rawQueue); } catch (e) { return; }
 
-            if (!data || !data.resi || data.id === lastProcessedId) return;
-            if (lastProcessedId === 0) {
-                lastProcessedId = data.id;
+            // Cari item pertama dalam antrean yang belum diproses oleh WMS
+            const nextItem = queue.find(item => !wmsSelesai.has(item.id));
+            if (!nextItem) return;
+
+            const targetInput = getTargetInput();
+            if (!targetInput) {
+                wmsBadge.style.background = '#dc2626';
+                wmsBadge.innerText = '❌ Kotak Tracking# tidak ditemukan!';
                 return;
             }
 
-            lastProcessedId = data.id;
-            const resiMasuk = data.resi;
-            const targetInput = getTargetInput();
+            // Kunci proses sementara agar WMS selesai memproses 1 resi sebelum lanjut ke resi berikutnya
+            sedangInput = true;
+            wmsSelesai.add(nextItem.id);
 
-            if (targetInput) {
-                targetInput.focus();
-                nativeSetter.call(targetInput, resiMasuk);
-                targetInput.dispatchEvent(new Event('input', { bubbles: true }));
-                targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+            targetInput.focus();
+            nativeSetter.call(targetInput, nextItem.resi);
+            targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+            targetInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-                // Eksekusi Enter langsung tanpa setTimeout
-                targetInput.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
-                targetInput.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
-                targetInput.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+            targetInput.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+            targetInput.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+            targetInput.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
 
-                wmsBadge.style.background = '#16a34a';
-                wmsBadge.innerText = '✅ Masuk WMS: ' + resiMasuk;
-            } else {
-                wmsBadge.style.background = '#dc2626';
-                wmsBadge.innerText = '❌ Kotak Tracking# tidak ditemukan!';
-            }
-        }, 25);
+            const sisaAntrean = queue.filter(item => !wmsSelesai.has(item.id)).length;
+            wmsBadge.style.background = '#16a34a';
+            wmsBadge.innerText = sisaAntrean > 0
+                ? `✅ Masuk: ${nextItem.resi} (Sisa antrean: ${sisaAntrean})`
+                : `✅ Masuk WMS: ${nextItem.resi}`;
+
+            // Beri jeda 180ms agar QianYi WMS selesai menyimpan & mengosongkan kotak sebelum resi berikutnya masuk
+            setTimeout(() => {
+                sedangInput = false;
+            }, 180);
+
+        }, 40);
     }
 })();
