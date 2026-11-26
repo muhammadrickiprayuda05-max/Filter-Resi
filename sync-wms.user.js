@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Auto Sync Scanner V10 ke QianYi Weigh & Ship
+// @name         Auto Sync Scanner V10 ke QianYi Weigh & Ship (TURBO)
 // @namespace    http://tampermonkey.net
-// @version      1.6
-// @description  Meneruskan resi VALID dari Scanner Filter V10 ke QianYi WMS secara instan (Anti-Jam)
+// @version      2.0
+// @description  Pengiriman resi VALID super cepat (0ms Bypass + Turbo Enter) ke QianYi WMS
 // @match        *://*.github.io/*
 // @match        *://*.best-inc.com/*
 // @grant        GM_setValue
@@ -15,82 +15,94 @@
     const currentUrl = window.location.href;
 
     // =========================================================================
-    // BAGIAN 1: PENGIRIM INSTAN (DENGAN FILTER ANTI-JAM & ANTI-TANGGAL)
+    // BAGIAN 1: PENGIRIM TURBO DI TAB SCANNER FILTER V10
     // =========================================================================
     if (currentUrl.includes('github.io')) {
-        let lastSentRowText = '';
+        let lastSentResi = '';
+        let lastSentTime = 0;
 
         const v10Badge = document.createElement('div');
         v10Badge.style.cssText = 'position:fixed;bottom:15px;right:15px;background:#16a34a;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:bold;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-        v10Badge.innerText = '⚡ Pengirim Instan V1.6 Siap';
+        v10Badge.innerText = '🚀 Turbo V2.0 Aktif';
         document.body.appendChild(v10Badge);
 
-        const cekDanKirimBarisBaru = () => {
+        const kirimKeWMS = (noResi) => {
+            const cleanResi = noResi.trim().replace(/\s+/g, '');
+            if (!cleanResi || cleanResi.length < 6) return;
+
+            // Cegah pengiriman ganda dalam 1.5 detik untuk resi yang sama
+            const now = Date.now();
+            if (cleanResi === lastSentResi && (now - lastSentTime) < 1500) return;
+
+            lastSentResi = cleanResi;
+            lastSentTime = now;
+
+            v10Badge.style.background = '#2563eb';
+            v10Badge.innerText = '⚡ Kirim Cepat: ' + cleanResi;
+
+            GM_setValue('resi_valid_terbaru', JSON.stringify({
+                resi: cleanResi,
+                id: now + Math.random()
+            }));
+        };
+
+        // JALUR 1: Pantau tabel riwayat (untuk kiriman dari PDA / Cloud Sync)
+        let lastRowSignature = '';
+        const cekTabelRiwayat = () => {
             const latestRow = document.querySelector('table tbody tr');
             if (!latestRow) return;
 
-            const fullText = latestRow.innerText.trim();
-            if (!fullText || fullText === lastSentRowText) return;
+            const cells = latestRow.querySelectorAll('td');
+            if (cells.length < 3) return;
 
-            const upperText = fullText.toUpperCase();
-            if (upperText.includes('CANCEL') || upperText.includes('DOUBLE') || upperText.includes('DUPLIKAT')) {
-                lastSentRowText = fullText;
+            // Di tabel V10: Kolom 0 = Waktu, Kolom 1 = No. Resi, Kolom 2 = Status
+            const waktu = cells[0].innerText.trim();
+            const noResi = cells[1].innerText.trim();
+            const status = cells[2].innerText.trim().toUpperCase();
+            const signature = waktu + '_' + noResi;
+
+            if (!noResi || signature === lastRowSignature) return;
+            lastRowSignature = signature;
+
+            if (status.includes('CANCEL') || status.includes('DOUBLE') || status.includes('DUPLIKAT')) {
                 v10Badge.style.background = '#dc2626';
-                v10Badge.innerText = '⛔ Diblokir (Cancel/Double)';
+                v10Badge.innerText = '⛔ Diblokir: ' + noResi;
                 return;
             }
 
-            const cells = Array.from(latestRow.querySelectorAll('td')).map(td => td.innerText.trim());
-            let noResi = '';
-            for (const cellText of cells) {
-                const clean = cellText.replace(/\s+/g, '');
-                
-                // ABAIKAN FORMAT JAM (misal: 05.20.57 atau 05:20:57) & TANGGAL
-                const isJamAtauTanggal = /^\d{1,2}[:.]\d{2}([:.]\d{2})?$/.test(clean) || /^\d{1,4}[-/]\d{1,2}[-/]\d{1,4}$/.test(clean);
-                const isKataStatus = /^(VALID|LOLOS|OK|AMAN|SUKSES|CANCEL|DOUBLE|PDA|PC|CONVEYOR)$/i.test(clean);
-
-                // Nomor resi asli: minimal 6 karakter, hanya huruf/angka/strip, bukan jam/status
-                if (clean.length >= 6 && !isJamAtauTanggal && !isKataStatus && /^[A-Za-z0-9-]+$/.test(clean)) {
-                    noResi = clean;
-                    break;
-                }
-            }
-
-            if (noResi) {
-                lastSentRowText = fullText;
-                v10Badge.style.background = '#2563eb';
-                v10Badge.innerText = '⚡ Terkirim Instan: ' + noResi;
-
-                GM_setValue('resi_valid_terbaru', JSON.stringify({
-                    resi: noResi,
-                    id: Date.now() + Math.random()
-                }));
+            if (status.includes('VALID') || status.includes('OK')) {
+                kirimKeWMS(noResi);
             }
         };
 
         setTimeout(() => {
             const initRow = document.querySelector('table tbody tr');
-            if (initRow) lastSentRowText = initRow.innerText.trim();
+            if (initRow) {
+                const cells = initRow.querySelectorAll('td');
+                if (cells.length >= 2) {
+                    lastRowSignature = cells[0].innerText.trim() + '_' + cells[1].innerText.trim();
+                }
+            }
 
             const tbody = document.querySelector('table tbody');
             if (tbody) {
-                const observer = new MutationObserver(() => cekDanKirimBarisBaru());
+                const observer = new MutationObserver(cekTabelRiwayat);
                 observer.observe(tbody, { childList: true, subtree: true, characterData: true });
             }
-        }, 600);
+        }, 400);
 
-        setInterval(cekDanKirimBarisBaru, 80);
+        setInterval(cekTabelRiwayat, 40);
     }
 
     // =========================================================================
-    // BAGIAN 2: PENERIMA CEPAT DI QIANYI WMS (50ms POLLING)
+    // BAGIAN 2: PENERIMA TURBO DI QIANYI WMS (TANPA JEDA / ZERO-TIMEOUT)
     // =========================================================================
     if (currentUrl.includes('best-inc.com')) {
         let lastProcessedId = 0;
 
         const wmsBadge = document.createElement('div');
         wmsBadge.style.cssText = 'position:fixed;bottom:15px;right:15px;background:#16a34a;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:bold;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-        wmsBadge.innerText = '⚡ Bridge V1.6 Aktif - Menunggu Scan...';
+        wmsBadge.innerText = '🚀 WMS Turbo V2.0 Siap';
         document.body.appendChild(wmsBadge);
 
         let cachedInput = null;
@@ -109,6 +121,9 @@
             );
             return cachedInput;
         };
+
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
 
         setInterval(() => {
             const rawData = GM_getValue('resi_valid_terbaru', '');
@@ -129,23 +144,21 @@
 
             if (targetInput) {
                 targetInput.focus();
-                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                 nativeSetter.call(targetInput, resiMasuk);
                 targetInput.dispatchEvent(new Event('input', { bubbles: true }));
                 targetInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-                setTimeout(() => {
-                    const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-                    targetInput.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
-                    targetInput.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
-                    targetInput.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
-                    wmsBadge.style.background = '#16a34a';
-                    wmsBadge.innerText = '✅ Masuk WMS: ' + resiMasuk;
-                }, 30);
+                // Eksekusi Enter langsung tanpa setTimeout
+                targetInput.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                targetInput.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+                targetInput.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+
+                wmsBadge.style.background = '#16a34a';
+                wmsBadge.innerText = '✅ Masuk WMS: ' + resiMasuk;
             } else {
                 wmsBadge.style.background = '#dc2626';
                 wmsBadge.innerText = '❌ Kotak Tracking# tidak ditemukan!';
             }
-        }, 50);
+        }, 25);
     }
 })();
