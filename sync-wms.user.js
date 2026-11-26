@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Auto Sync Scanner V10 ke QianYi Weigh & Ship
 // @namespace    http://tampermonkey.net
-// @version      1.5
-// @description  Meneruskan resi VALID dari Scanner Filter V10 ke QianYi WMS secara instan (Zero-Delay)
+// @version      1.6
+// @description  Meneruskan resi VALID dari Scanner Filter V10 ke QianYi WMS secara instan (Anti-Jam)
 // @match        *://*.github.io/*
 // @match        *://*.best-inc.com/*
 // @grant        GM_setValue
@@ -15,14 +15,14 @@
     const currentUrl = window.location.href;
 
     // =========================================================================
-    // BAGIAN 1: PENGIRIM INSTAN (MUTATION OBSERVER - 0ms DELAY)
+    // BAGIAN 1: PENGIRIM INSTAN (DENGAN FILTER ANTI-JAM & ANTI-TANGGAL)
     // =========================================================================
     if (currentUrl.includes('github.io')) {
         let lastSentRowText = '';
 
         const v10Badge = document.createElement('div');
         v10Badge.style.cssText = 'position:fixed;bottom:15px;right:15px;background:#16a34a;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:bold;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-        v10Badge.innerText = '⚡ Pengirim Instan V1.5 Siap';
+        v10Badge.innerText = '⚡ Pengirim Instan V1.6 Siap';
         document.body.appendChild(v10Badge);
 
         const cekDanKirimBarisBaru = () => {
@@ -44,7 +44,13 @@
             let noResi = '';
             for (const cellText of cells) {
                 const clean = cellText.replace(/\s+/g, '');
-                if (clean.length >= 6 && !clean.includes(':') && !/^(VALID|LOLOS|OK|AMAN|SUKSES|CANCEL|DOUBLE)$/i.test(clean)) {
+                
+                // ABAIKAN FORMAT JAM (misal: 05.20.57 atau 05:20:57) & TANGGAL
+                const isJamAtauTanggal = /^\d{1,2}[:.]\d{2}([:.]\d{2})?$/.test(clean) || /^\d{1,4}[-/]\d{1,2}[-/]\d{1,4}$/.test(clean);
+                const isKataStatus = /^(VALID|LOLOS|OK|AMAN|SUKSES|CANCEL|DOUBLE|PDA|PC|CONVEYOR)$/i.test(clean);
+
+                // Nomor resi asli: minimal 6 karakter, hanya huruf/angka/strip, bukan jam/status
+                if (clean.length >= 6 && !isJamAtauTanggal && !isKataStatus && /^[A-Za-z0-9-]+$/.test(clean)) {
                     noResi = clean;
                     break;
                 }
@@ -62,12 +68,10 @@
             }
         };
 
-        // Catat baris awal agar tidak mengirim data lama
         setTimeout(() => {
             const initRow = document.querySelector('table tbody tr');
             if (initRow) lastSentRowText = initRow.innerText.trim();
 
-            // Pantau perubahan tabel secara instan tanpa menunggu interval
             const tbody = document.querySelector('table tbody');
             if (tbody) {
                 const observer = new MutationObserver(() => cekDanKirimBarisBaru());
@@ -75,7 +79,6 @@
             }
         }, 600);
 
-        // Cadangan pengecekan cepat setiap 80ms
         setInterval(cekDanKirimBarisBaru, 80);
     }
 
@@ -87,10 +90,9 @@
 
         const wmsBadge = document.createElement('div');
         wmsBadge.style.cssText = 'position:fixed;bottom:15px;right:15px;background:#16a34a;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:bold;z-index:99999;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-        wmsBadge.innerText = '⚡ Bridge V1.5 Aktif - Menunggu Scan...';
+        wmsBadge.innerText = '⚡ Bridge V1.6 Aktif - Menunggu Scan...';
         document.body.appendChild(wmsBadge);
 
-        // Simpan referensi kotak input Tracking# sekali saja agar tidak mencari ulang tiap scan
         let cachedInput = null;
         const getTargetInput = () => {
             if (cachedInput && document.body.contains(cachedInput) && !cachedInput.disabled && cachedInput.offsetParent !== null) {
